@@ -1,20 +1,22 @@
 library(lsm)
 require(Matrix)
+require(jjplot)
+require(gridExtra)
+require(ggplot2)
 
 # Load Davis' Southern Women dataset
 data(davis)
 
 # Fit the model via MCMC with 2 latent sets
 K <- 2                    
-dims <- list(T=nrow(davis), N=ncol(davis), K=K)
 
 # Set priors (see documentation for more explanation)
-priors <- list(theta=c(-2,10),z=c(1,1),epsilon=c(1,dims$N))
+priors <- list(theta=c(0,1),z=c(1,1),epsilon=c(1,ncol(davis)))
 
 # Fit the model via Gibbs sampling
 set.seed(123)
 niter <- 100
-fit <- gibbs(davis,dims,priors,niter=niter)
+fit <- lsm(davis,K,priors,niter=niter,verbose=TRUE)
 
 # Plot the progress of loglikelihood on the training data
 pdf("davis-llks.pdf",width=5,height=5)
@@ -23,9 +25,9 @@ jjplot(llk ~ line() + iter, data=df, theme=jjplot.theme("bw"),xlab="iteration",y
 dev.off()
 
 # Plot predictive distribution using last 20 iterations of MCMC
-subs <- expand.grid(1:dims$T,1:dims$N)
+subs <- expand.grid(1:nrow(davis),1:ncol(davis))
 keep <- (niter-20):niter
-yhat <- post.predictive(list(fit),subs,keep)
+yhat <- post.predictive(fit,subs,keep)
 ploty <- disp(t(davis))
 plotyhat <- disp(t(yhat))
 
@@ -50,7 +52,7 @@ dev.off()
 nchains <- 3
 fits <- list()
 for (i in 1:nchains) 
-  fits[[i]] <- gibbs(davis,dims,priors,niter=niter)
+  fits[[i]] <- lsm(davis,K,priors,niter)
 
 # Show posterior predictive estimates averaged over chains
 keep <- (niter/2):niter

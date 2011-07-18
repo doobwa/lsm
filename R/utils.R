@@ -151,11 +151,6 @@ llk <- function(y,dims,params) {
   return(lk)
 }
 
-initialize.theta <- function(N,K,alpha=4,beta=1) {
-  theta <- matrix(rbeta(N*K, alpha, beta), N, K)
-  return(log(1-theta))
-}
-
 plotProgress <- function(fit) {
 # TODO: Need to fix scaling on jjplot tile().  Right now just sets one of the elements to 1.
   y <- fit$y

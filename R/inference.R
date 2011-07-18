@@ -1,9 +1,24 @@
-gibbs <- function(y,dims,priors,covars=NULL,niter=20,
-                  verbose=TRUE,z.init="prior",zcode=0) {
-
+##' Perform Gibbs sampling for the latent set model from DuBois, et al 2011.
+##' 
+##' @title Gibbs sampling for the latent set model from DuBois, et al 2011.
+##' @param y binary Matrix of observed two-mode data (e.g. events x individuals)
+##' @param K number of latent sets to learn
+##' @param priors named list: \describe{ \item{z}{a vector (length
+##' two) with the Beta priors on probabilities of nonzero entries in
+##' each column of W and Z} \item{epsilon}{a vector (length two) with
+##' the Beta priors on noise parameter epsilon} \item{theta}{a vector
+##' (length two) with the parameters of the lognormal prior}}
+##' @param niter number of iterations to perform
+##' @param verbose if true, diagnostics will be shown after each iteration
+##' @param zcode determines how 0's are encoded in the provided matrix. (Default's to 0.)
+##' @param dims names list with T the number of events, N the number of
+##' @return lsm object with parameter estimates from the final iteration, parameter values from each iteration, loglikelihood at each iteration, and the observed data.
+##' @export
+##' @author Chris DuBois
+lsm <- function(y,K,priors,niter=20,zcode=0,verbose=FALSE) {
   zs <- ws <- thetas <- list()
   llks <- rep(0,niter)
-
+  dims <- list(T=nrow(y),N=ncol(y),K=K)
   # Initialize z and theta and sample w first.
   params <- list()
   phis <- rbeta(dims$K,priors$z[1],priors$z[2])
@@ -14,7 +29,7 @@ gibbs <- function(y,dims,priors,covars=NULL,niter=20,
   params$z <- z
   params$w <- Matrix(0, dims$T, dims$K)
   params$psi <- 1  
-  params$theta <- Matrix(- initialize.theta(dims$N, dims$K))  # should be positive
+  params$theta <- Matrix(initialize.theta(dims$N, dims$K,priors$theta)) # positive
   params$epsilon <- log(1 - priors$epsilon[1]/priors$epsilon[2])
   for (iter in 1:niter) {
     params <- sampleW(y,dims,params,priors,verbose,zcode)
@@ -31,29 +46,46 @@ gibbs <- function(y,dims,priors,covars=NULL,niter=20,
     class(fit) <- "lsm"
 
     # Display progress
-    cat("\niter:",iter," llk:")
+    cat("\niter:",iter)
     if (verbose) {
       plotProgress(fit)
       llks[iter] <- compute.llk(y,params,wsum="all",zcode=zcode)
-      cat(llks[iter],"|")
+      cat("llk:",llks[iter])
     }
   }
   return(fit)
 }
-predict.lsm <- function (fit,subs) {
-  params <- fit$params
-    if (nrow(subs) > 1e+06) 
-        error("Too many predictions to make.")
-    ws <- params$w[subs[, 1], ]
-    zs <- params$z[subs[, 2], ]
-    thetas <- params$theta[subs[, 2], ]
-    v <- - ws * zs * thetas
-    yhat <- 1 - exp(rowSums(v) + params$epsilon)
-    return(yhat)
-  }
-
-post.predictive.list <- function (fits, subs, keep) 
+##' Uses the point estimates from the given iteration of Gibbs sampling
+##' to compute predictions at the provided elements.  The equation is:
+##' y.hat[i,j] = 1 - exp(sum_k w[i,k] * z[j,k] * thetas[j,k] + epsilon)
+##' 
+##' @title Make predictions for a fitted lsm model
+##' @param fit an lsm fit object
+##' @param iter which iteration from Gibbs sampling to use for
+##' predictions.  Cannot be larger than the number used when the model
+##' was fit.  Defaults to the last iteration.
+##' @param subs subscripts of the orginal matrix where predictions are deisred
+##' @return a vector of predictions (y.hat), one for each row of subs
+##' @author Chris DuBois
+predict.lsm <- function (fit,iter=length(fit$ws),subs) {
+  if (nrow(subs) > 1e+06) 
+    error("Too many predictions to make.")
+  ws <- fit$ws[[iter]][subs[, 1], ]
+  zs <- fit$zs[[iter]][subs[, 2], ]
+  thetas <- fit$thetas[[iter]][subs[, 2], ]
+  v <- - ws * zs * thetas
+  yhat <- 1 - exp(rowSums(v) + fit$params$epsilon)
+  return(yhat)
+}
+##' @title Compute the posterior predictive using samples from multiple chains (ie. using multiple lsm fit objects). 
+##' @param fits a list of lsm fit objects
+##' @param subs subscripts of the matrix where predictions are desired
+##' @param keep which iterations from each Gibbs sampling chain to use for computing the posterior loglikelihood
+##' @return vector of predictions averaged over the provided iterations from possibly multiple chains
+##' @author Chris DuBois
+post.predictive <- function (fits, subs, keep) 
 {
+  if (class(fits) != "lsit") fits <- list(fits)
   y <- fits[[1]]$y
   F <- length(fits)
   K <- ncol(fits[[1]]$params$z)
@@ -62,7 +94,7 @@ post.predictive.list <- function (fits, subs, keep)
     fit <- fits[[f]]
     for (i in 1:length(keep)) {
       k <- keep[i]
-      yhats[, (f - 1) * length(keep) + i] <- predict(fit,subs)
+      yhats[, (f - 1) * length(keep) + i] <- predict(fit,i,subs)
     }
   }
   yhat <- matrix(yhats,nrow(y),ncol(y))
@@ -70,12 +102,29 @@ post.predictive.list <- function (fits, subs, keep)
   if (!is.null(colnames(y))) colnames(yhat) <- colnames(y)  
   return(yhat)
 }
-post.predictive <- function(object,...) UseMethod("post.predictive")
 
-llk <- function(fit) {
-  
-}
-
+##' One of the main advantages of the link function used for this
+##' latent set model is that we only need to compute predictions at
+##' the elements (i,j) where person j is a member of at least one of
+##' the active sets (ie.   {(i,j): sum_k w{ik}z_{jk} > 0}).  For all
+##' other elements we know the prediction is 1-exp(epsilon).  When
+##' computing the loglikelihood, then, the sum over all these other
+##' elements is quickly available just by using the row (or column)
+##' sums of the observed data, y, and the dimnesions of y.
+##' 
+##' I have yet to find a way for a Matrix object to default to NA
+##' rather than 0.  In the case where the majority of the matrix is
+##' unobserved, you may want to represent NA's using 0's.  This can be
+##' done by setting zcode to -1.
+##'
+##' ##' @title Compute loglikelihood of data using the given parameters
+##' @param y Matrix of observed data
+##' @param params list of model parameter values
+##' @param wsum all if the likelihood of all entries is desired, row: loglikelihoods of each row of y, col: loglikelihoods of each column of y
+##' @param zcode determines what value represents 0.  0: 0's.  
+##' @param v Matrix of W x (Z * Theta).  Provide this if it's already known to save on computation time.
+##' @return loglikelihood of the data given the provided model parameters
+##' @author Chris DuBois
 compute.llk <- function(y,params,wsum="all",zcode=0,v=NULL) {
   # zero.code: the value in y that indicates a 0.  If zero.code = -1, then 0's are
   #            interpreted as NA's.
@@ -83,14 +132,15 @@ compute.llk <- function(y,params,wsum="all",zcode=0,v=NULL) {
   z <- params$z
   epsilon <- params$epsilon
   theta <- params$theta
-  psi <- params$psi
+  psi <- 1 # params$psi
   
   if (zcode == 0) {
 
-    # Get likelihood contribution for each actor
+    # Get likelihood contribution for each row or column
     sum2 <- function(x) sum(x,na.rm=TRUE)
     rowSums2 <- function(x) rowSums(x,na.rm=TRUE)
     colSums2 <- function(x) colSums(x,na.rm=TRUE)
+    
     # Rowwise, columnwise counts of observed values
     rowcounts <- ncol(y) - rowSums(is.na(y))
     colcounts <- nrow(y) - colSums(is.na(y))
@@ -150,7 +200,6 @@ compute.llk <- function(y,params,wsum="all",zcode=0,v=NULL) {
                   "all" = sum(lij))
 
   } else {
-    # Get likelihood contribution for each actor
     y1 <- drop0(y == 1)
     y0 <- drop0(y == -1)
 
@@ -179,13 +228,22 @@ compute.llk <- function(y,params,wsum="all",zcode=0,v=NULL) {
   }
   return(llk)
 }
-
-sampleTheta <- function(y,dims,params,priors,verbose=FALSE,zcode=0) {
+##' @title Method for sampling theta values for the latent set model
+##' @param y 
+##' @param dims 
+##' @param params 
+##' @param priors 
+##' @param verbose 
+##' @param zcode 
+##' @param mh.scale standard deviation of the Gaussian used in the Metropolis-Hastings step.
+##' @return list of parameter values: w, z, and the updated theta
+##' @author Chris DuBois
+sampleTheta <- function(y,dims,params,priors,verbose=FALSE,zcode=0,mh.scale=1) {
   if (verbose) cat("\nSampling theta")  
   w <- params$w
   z <- params$z
   ix <- which(z == 0)
-  params$theta[ix] <- -initialize.theta(dims$N,dims$K)[ix]
+  params$theta[ix] <- initialize.theta(dims$N,dims$K,priors$theta)[ix]
   psi <- params$psi
   epsilon <- params$epsilon
   # For each latent set
@@ -198,7 +256,7 @@ sampleTheta <- function(y,dims,params,priors,verbose=FALSE,zcode=0) {
       # Get proposed thetas where z_jk=1
       dtheta <- rnorm(length(js))  # TODO: Better proposal distribution
       theta.proposed[js,k] <- theta.proposed[js,k] - dtheta #using minus to keep symmetry with other version of sampleTheta
-      theta.proposed[which(theta.proposed < 0)] <- 0
+      theta.proposed[which(theta.proposed < 0)] <- 0.001
 
       # Get vector of prob. accept
       params$theta <- theta.current
@@ -206,8 +264,12 @@ sampleTheta <- function(y,dims,params,priors,verbose=FALSE,zcode=0) {
       params$theta <- theta.proposed
       lj.propose <- compute.llk(y,params,"col",zcode)
       params$theta <- theta.current
-      currentPrior <- log(dnorm(theta.current[js,k],priors$theta[1],priors$theta[2]))
-      proposalPrior <- log(dnorm(theta.proposed[js,k],priors$theta[1],priors$theta[2]))
+#      currentPrior <- log(dbeta(1-exp(-theta.current[js,k]),
+#                                priors$theta[1],priors$theta[2]))
+#      proposalPrior <- log(dbeta(1-exp(-theta.proposed[js,k]),
+#                                 priors$theta[1],priors$theta[2]))
+      currentPrior <- log(dlnorm(theta.current[js,k],priors$theta[1],priors$theta[2]))
+      proposalPrior <- log(dlnorm(theta.proposed[js,k],priors$theta[1],priors$theta[2]))
       r <- exp(lj.propose[js] - lj.current[js] + proposalPrior - currentPrior)
 
       # Update lj's to have lj.proposal where accepted
@@ -227,9 +289,7 @@ sampleTheta <- function(y,dims,params,priors,verbose=FALSE,zcode=0) {
 
 sampleW <- function(y,dims,params,priors,verbose=FALSE,zcode=0) {
   # TODO: Put a different prior on the w's (ie. not the same prior as z's).
-  
   if (verbose) cat("\nSampling w")
-
   # For each k, sample
   for (k in 1:dims$K) {
     if (verbose) cat(".")
@@ -248,10 +308,9 @@ sampleW <- function(y,dims,params,priors,verbose=FALSE,zcode=0) {
 sampleZ <- function(y,dims,params,priors,verbose=FALSE,zcode=0) {
   if (verbose) cat("\nSampling z")
   # Draw thetas where z=0 from prior
-  theta <- - initialize.theta(dims$N,dims$K)
+  theta <- initialize.theta(dims$N,dims$K,priors$theta)
   iz <- which(params$z == 1)
   theta[iz] <- params$theta[iz]  # use current thetas where z==1
-
   # For each k, sample
   for (k in 1:dims$K) {
     if (verbose) cat(".")
@@ -269,7 +328,6 @@ sampleZ <- function(y,dims,params,priors,verbose=FALSE,zcode=0) {
 
 sampleEpsilon <- function(y,dims,params,priors,verbose=FALSE,zcode=0) {
   if (verbose) cat("\nSampling epsilon")
-
   # Draw proposed epsilon from prior
   e1 <- params$epsilon
 #  e2 <- log(1 - rbeta(1,priors$epsilon[1],priors$epsilon[2]))
@@ -293,4 +351,10 @@ sampleEpsilon <- function(y,dims,params,priors,verbose=FALSE,zcode=0) {
     params$epsilon <- e1
   }
   return(params)
+}
+initialize.theta <- function(N,K,priors) {
+#  theta <- matrix(rbeta(N*K, priors[1], priors[2]), N, K)
+#  return(-log(1-theta))
+  theta <- matrix(rlnorm(N*K, priors[1],priors[2]), N, K)
+  return(theta)
 }
