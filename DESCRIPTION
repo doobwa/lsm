@@ -5,7 +5,7 @@ Version: 1.0
 Date: 2011-07-13
 Author: Christopher DuBois
 Maintainer: Christopher DuBois <chris.dubois@gmail.com>
-Description: Implementation of gibbs sampling for a latent
+Description: Implementation of Gibbs sampling for a latent
     set model of coappearance data.
 License: GPL 2.0
 LazyLoad: yes
@@ -19,4 +19,3 @@ Imports:
 Collate:
     'inference.R'
     'utils.R'
-    'libraries.R'

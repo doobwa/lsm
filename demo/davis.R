@@ -2,7 +2,7 @@ library(lsm)
 require(Matrix)
 require(jjplot)
 require(gridExtra)
-require(ggplot2)
+#require(ggplot2)
 
 # Load Davis' Southern Women dataset
 data(davis)

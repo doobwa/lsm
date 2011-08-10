@@ -111,33 +111,6 @@ samplelpmat <- function(pz) {
   return(x)
 }
 
-disp <- function(z,rowOrderNames=NULL,colOrderNames=NULL,limits=c(0,1)) {
-  require(ggplot2)
-  if (class(z)!="matrix") {
-    cat("converting to matrix...\n")
-    z <- as.matrix(z)
-  }
-  df <- melt(z)
-  if (is.null(rowOrderNames) & !is.null(rownames(z))) {
-    rowOrderNames <- rev(rownames(z))
-  }
-  if (is.null(colOrderNames) & !is.null(colnames(z))) {
-    colOrderNames <- colnames(z)
-  }
-  if (!is.null(rowOrderNames)) {
-    df$X1 <- reorder(df$X1,match(as.character(df$X1),rowOrderNames))
-  }
-  if (!is.null(colOrderNames)) {
-    df$X2 <- reorder(df$X2,match(as.character(df$X2),colOrderNames))
-  }
-  ggplot(df,aes(x=X2,y=X1)) + geom_tile(aes(fill=value))+
-    scale_fill_gradient(low="white",high="black",limits=limits)+
-    theme_bw() +labs(x="",y="") +
-    opts(legend.position="none",
-         panel.grid.minor=theme_blank(),panel.grid.major=theme_blank(),
-         axis.text.x = theme_text(angle = -90,hjust=0))
-      
-}
 
 llk <- function(y,dims,params) {
   lk <- lpy(y,dims,params,wsum="all")
@@ -153,12 +126,15 @@ llk <- function(y,dims,params) {
 
 plotProgress <- function(fit) {
 # TODO: Need to fix scaling on jjplot tile().  Right now just sets one of the elements to 1.
+
   y <- fit$y
   if (any(dim(y)>100)) error("Progress plots on a problem of this size not recommended")
   params <- fit$params
   T <- nrow(y)
   N <- ncol(y)
   theta <- params$theta
+  colnames(theta) <- colnames(z)
+  rownames(theta) <- rownames(z)
   z <- params$z
   rownames(z) <- colnames(y)
   colnames(z) <- paste("set",0:(K-1))
@@ -166,36 +142,37 @@ plotProgress <- function(fit) {
   rownames(w) <- rownames(y)
   colnames(w) <- paste("set",0:(K-1))
   subs <- ind2sub(1:(T*N),c(T,N))
-  yhat <- as.matrix(y)
-  yhat[,] <- matrix(predict(fit,subs),T,N)
+  yhat <- matrix(predict.lsm(fit=fit,subs=subs),T,N)
+  colnames(yhat) <- colnames(y)
+  rownames(yhat) <- rownames(y)
   yhat <- Matrix(yhat)
   
   grid.newpage()
   pushViewport(viewport(layout=grid.layout(2, 3)))
   pushViewport(viewport(layout.pos.col=1,  layout.pos.row=1))
-  disp2(z)
+  disp(z)
   popViewport()
   pushViewport(viewport(layout.pos.col=2,  layout.pos.row=1))
-  disp2(theta)
+  disp(theta)
   popViewport()
   pushViewport(viewport(layout.pos.col=3,  layout.pos.row=1))
-  disp2(z*theta)
+  disp(z*theta)
   popViewport()
   pushViewport(viewport(layout.pos.col=1,  layout.pos.row=2))
-  disp2(w)
+  disp(w)
   popViewport()
   pushViewport(viewport(layout.pos.col=2,  layout.pos.row=2))
-  disp2(y)
+  disp(t(y))
   popViewport()
   pushViewport(viewport(layout.pos.col=3,  layout.pos.row=2))
-  yhat[1,1] <- 0
-  yhat[1,2] <- 1
-  disp2(yhat)#,limits=c(0,1))
+#  yhat[1,1] <- 0  # Temporary hack
+#  yhat[1,2] <- 1
+  disp(t(yhat))
   popViewport()
 
 }
 
-disp2 <- function (z, rowOrderNames = NULL, colOrderNames = NULL, limits = c(0,1)) 
+disp <- function (z, rowOrderNames = NULL, colOrderNames = NULL, limits = c(0,1)) 
 {
 
     require(jjplot)
@@ -208,19 +185,18 @@ disp2 <- function (z, rowOrderNames = NULL, colOrderNames = NULL, limits = c(0,1
     df <- melt(z)
     
     if (is.null(rowOrderNames) & !is.null(rownames(z))) {
-        rowOrderNames <- rev(rownames(z))
+        rowOrderNames <- rownames(z)
     }
     if (is.null(colOrderNames) & !is.null(colnames(z))) {
         colOrderNames <- colnames(z)
     }
+
     if (!is.null(rowOrderNames)) {
         df$X1 <- reorder(df$X1, match(as.character(df$X1), rowOrderNames))
     }
     if (!is.null(colOrderNames)) {
         df$X2 <- reorder(df$X2, match(as.character(df$X2), colOrderNames))
     }
-    df$X1 <- as.numeric(df$X1)
-    df$X2 <- as.numeric(df$X2)
     
-    jjplot(X2 ~ tile(border=NA) : color(value) + X1,  data = df,newpage=FALSE,theme=jjplot.theme("bw"))
+    jjplot(X2 ~ tile(border=NA) : color(value) + X1,  data = df, newpage=FALSE,theme=jjplot.theme("bw"),xlab="",ylab="")
 }

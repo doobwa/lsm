@@ -1,5 +1,0 @@
-require(jjplot)
-require(gridExtra)
-require(reshape)
-require(Matrix)
-require(ggplot2)
